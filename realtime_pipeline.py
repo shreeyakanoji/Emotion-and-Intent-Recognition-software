@@ -8,7 +8,7 @@ from scipy.io import loadmat, savemat
 from scipy.signal import butter, lfilter, filtfilt, welch
 from sklearn.ensemble import RandomForestClassifier
 
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
 # Simple, safer example of the realtime pipeline from the Draft 1 commit.
 # Improvements made:
 # - Validates .mat loading and expected keys
@@ -17,7 +17,7 @@ from sklearn.ensemble import RandomForestClassifier
 # - Uses deterministic mock training (seeded RNG) and checks that the model is trained
 # - Uses logging instead of prints
 # - Writes generated sample dataset to a temp directory (not the repo root)
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
