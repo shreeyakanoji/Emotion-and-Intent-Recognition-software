@@ -5,7 +5,7 @@ real, labeled data (DEAP dataset).
 
 ## Setup
 
-1. Request DEAP dataset access (free, academic use, requires signing a EULA):
+1. Request DEAP dataset access (free, academic use, requires signing a EULA)  :
    http://www.eecs.qmul.ac.uk/mmv/datasets/deap/
 2. Download the **"data_preprocessed_python"** folder — this gives you
    `s01.dat` through `s32.dat`.
