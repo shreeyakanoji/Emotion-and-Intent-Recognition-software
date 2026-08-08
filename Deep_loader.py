@@ -16,29 +16,7 @@ uscle)
                [valence, arousal, dominance, liking]
 
 We'll turn valence/arousal into binary classes (High/Low) by splitting at
-the middle of the 1-9 scale, which is the standard approach in DEAP papers.
-"""
-
-import pickle
-import numpy as np
-
-# DEAP's 32 EEG channels are in a fixed order defined by the dataset creators.
-# This is the standard 10-20 system channel order used in DEAP's own docs.
-EEG_CHANNEL_NAMES = [
-    "Fp1", "AF3", "F3", "F7", "FC5", "FC1", "C3", "T7", "CP5", "CP1",
-    "P3", "P7", "PO3", "O1", "Oz", "Pz", "Fp2", "AF4", "Fz", "F4",
-    "F8", "FC6", "FC2", "Cz", "C4", "T8", "CP6", "CP2", "P4", "P8",
-    "PO4", "O2",
-]
-
-PLETHYSMOGRAPH_CHANNEL_IDX = 38  # peripheral channel used for cardiac features
-SAMPLING_RATE = 128  # Hz, after DEAP's own preprocessing
-
-
-def load_subject(dat_file_path):
-    """
-    Load one subject's .dat file.
-
+the
     Returns:
         eeg:        ndarray, shape (40 trials, 32 channels, 8064 samples)
         plethysmo:  ndarray, shape (40 trials, 8064 samples)
