@@ -11,30 +11,7 @@ CHUNK_SIZE = int(FS * CHUNK_SEC)
 
 # --- session state so the demo signal persists across reruns ---
 if "subject_data" not in st.session_state:
-    st.session_state.subject_data = generate_subject_data(seed=1)
-    st.session_state.trial_idx = 0
-    st.session_state.sample_idx = 0
-
-if "pipeline" not in st.session_state:
-    try:
-        st.session_state.pipeline = EmotionPipeline("trained_model.joblib")
-        st.session_state.model_loaded = True
-    except FileNotFoundError:
-        st.session_state.model_loaded = False
-
-if not st.session_state.model_loaded:
-    st.error(
-        "No trained_model.joblib found. Run `python train.py <data_dir> --target valence` "
-        "first (real DEAP data or generate_synthetic_deap.py output) — this saves the "
-        "model file this app loads."
-    )
-    st.stop()
-
-col1, col2 = st.columns([2, 1])
-
-placeholder_signal = col1.empty()
-placeholder_result = col2.empty()
-
+  
 run = st.button("Start live demo")
 
 if run:
