@@ -14,9 +14,11 @@ import streamlit as st
 
 from generate_synthetic_deap import generate_subject_data, N_SAMPLES, FS
 from pipeline import EmotionPipeline
+from theme import apply_theme
 
 st.set_page_config(page_title="EEG/Cardiac Emotion Recognition", layout="wide")
-st.title("EEG + Cardiac Emotion Recognition — Live Demo")
+apply_theme()
+st.title("💗 EEG + Cardiac Emotion Recognition — Live Demo")
 st.caption(
     "Currently replaying synthetic data for demo purposes. Swap the data "
     "source for a real DEAP trial or live hardware feed once available — "

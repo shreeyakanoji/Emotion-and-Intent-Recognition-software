@@ -25,9 +25,11 @@ from deap_loader import load_subject, load_all_subjects, SAMPLING_RATE
 from generate_synthetic_deap import generate_subject_data, N_TRIALS, N_SAMPLES, FS
 from train import train_model
 from pipeline import EmotionPipeline
+from theme import apply_theme
 
 st.set_page_config(page_title="EEG/Cardiac Emotion Recognition — Studio", layout="wide")
-st.title("EEG + Cardiac Emotion Recognition — Studio")
+apply_theme()
+st.title("💗 EEG + Cardiac Emotion Recognition — Studio")
 st.caption(
     "Get data, train a model, and test it on new trials — all in one place."
 )
@@ -124,6 +126,26 @@ else:
 
 if "eeg_all" in st.session_state:
     st.info(f"Current dataset: {st.session_state.data_source_label}")
+
+    with st.container(border=True):
+        st.markdown("### 🔎 Live scan — signal currently loaded")
+        preview_trial = st.slider(
+            "Preview trial", 0, st.session_state.eeg_all.shape[0] - 1, 0, key="preview_trial"
+        )
+        preview_len = min(1000, st.session_state.eeg_all.shape[2])
+        pc1, pc2 = st.columns(2)
+        with pc1:
+            st.line_chart(
+                st.session_state.eeg_all[preview_trial, 0, :preview_len],
+                height=180, use_container_width=True,
+            )
+            st.caption(f"EEG channel Fp1 — trial {preview_trial}")
+        with pc2:
+            st.line_chart(
+                st.session_state.pleth_all[preview_trial, :preview_len],
+                height=180, use_container_width=True,
+            )
+            st.caption(f"Plethysmograph (cardiac) — trial {preview_trial}")
 
 st.divider()
 
