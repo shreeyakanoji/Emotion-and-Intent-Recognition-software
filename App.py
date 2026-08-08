@@ -4,24 +4,7 @@ app.py
 
 It simulates a live feed by replaying synthetic (or real, once you have
 DEAP + a trained model) data chunk by chunk, exactly like your original
-FileStreamAcquisition class did — same idea, now wired to the real pipeline
-and displayed properly.
-"""
-
-import time
-import numpy as np
-import streamlit as st
-
-from generate_synthetic_deap import generate_subject_data, N_SAMPLES, FS
-from pipeline import EmotionPipeline
-
-st.set_page_config(page_title="EEG/Cardiac Emotion Recognition", layout="wide")
-st.title("EEG + Cardiac Emotion Recognition — Live Demo")
-st.caption(
-    "Currently replaying synthetic data for demo purposes. Swap the data "
-    "source for a real DEAP trial or live hardware feed once available — "
-    "the pipeline code doesn't need to change, only where chunks come from."
-)
+FileStrea
 
 CHUNK_SEC = 2.0
 CHUNK_SIZE = int(FS * CHUNK_SEC)
