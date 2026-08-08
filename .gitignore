@@ -1,0 +1,4 @@
+synthetic_deap_data/
+trained_model.joblib
+__pycache__/
+*.pyc
