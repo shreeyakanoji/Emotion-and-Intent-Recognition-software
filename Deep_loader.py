@@ -1,27 +1,4 @@
-"""
-deap_loader.py
-
-Loads DEAP dataset files (the "preprocessed Python" version).
-
-IMPORTANT — you have to get the data yourself:
-DEAP requires signing an End User License Agreement before download
-(it's free for academic use). Request access here:
-http://www.eecs.qmul.ac.uk/mmv/datasets/deap/
-
-Once approved, download the "data_preprocessed_python" folder. It contains
-32 files, one per subject: s01.dat, s02.dat, ... s32.dat
-
-WHAT'S INSIDE EACH FILE (this is the part worth understanding, not memorizing):
-Each .dat file is a Python pickle containing a dict with two keys:
-
-  'data':   shape (40, 40, 8064)
-            -> 40 trials (one per music video watched)
-            -> 40 channels total:
-                 channels 0-31  = EEG (international 10-20 system, 32 electrodes)
-                 channels 32-39 = peripheral physiological signals:
-                     32 = hEOG (horizontal eye movement)
-                     33 = vEOG (vertical eye movement)
-                     34 = zEMG (zygomaticus major, cheek muscle)
+uscle)
                      35 = tEMG (trapezius, shoulder muscle)
                      36 = GSR (skin conductance)
                      37 = Respiration belt
