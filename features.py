@@ -1,14 +1,11 @@
 """
 features.py
 
-Turns raw EEG + cardiac signals into a feature vector per trial.
+will turn raw EEG + plethysmograph signals into a feature vector per trial.
 
-CHANGED FROM v2: band-power extraction now takes an explicit `channel_names`
-list instead of importing DEAP's hardcoded 32-channel list. This is what
-lets the same feature code run on DEAP (32 ch), DREAMER (14 ch), or any
-other montage — see dataset_adapters.py for where channel_names comes from.
-
-Three feature families, same as before:
+This replaces my original 2-feature version (alpha power + ECG variance)
+with three feature families that are actually used in published EEG emotion
+recognition work:
 
   1. Band power per EEG channel (theta, alpha, beta, gamma)
      -> WHY: different frequency bands reflect different brain states.
@@ -21,28 +18,29 @@ Three feature families, same as before:
      -> WHY: this is a specific, well-established finding in affective
         neuroscience (Davidson et al.) — relatively more LEFT frontal alpha
         activity is associated with negative affect/withdrawal, and more
-        RIGHT frontal alpha with positive affect/approach. Computed as
-        ln(right_alpha) - ln(left_alpha) using an F4/F3 electrode pair.
-        NOTE: if the dataset's montage doesn't include an F3/F4 pair (or
-        an equivalent), this feature is skipped rather than faked — see
-        `frontal_pair` below.
+        RIGHT frontal alpha with positive affect/approach. Because alpha
+        power is inversely related to activation, the asymmetry score is
+        usually computed as ln(right_alpha) - ln(left_alpha) using an
+        F4/F3 electrode pair. This is a much more theoretically-grounded
+        feature than raw band power alone — worth highlighting in any
+        write-up, since it shows you understand *why* a feature works,
+        not just that scipy can compute it.
 
-  3. Heart-rate variability (HRV) style features from the cardiac signal
+  3. Heart-rate variability (HRV) style features from the plethysmograph
      -> WHY: cardiac rhythm variability reflects autonomic nervous system
         state (sympathetic vs. parasympathetic balance), which correlates
-        with arousal. We detect pulse/QRS peaks, compute inter-beat
-        intervals (IBIs), then compute two standard HRV metrics:
+        with arousal. We detect pulse peaks, compute inter-beat intervals
+        (IBIs), then compute two standard HRV metrics:
           RMSSD = root mean square of successive IBI differences
                   (short-term variability, parasympathetic-linked)
           SDNN  = standard deviation of all IBIs
                   (overall variability)
-     Works the same whether the cardiac signal is a literal ECG or a
-     plethysmograph/PPG proxy — both are periodic with the cardiac cycle,
-     which is all peak-detection-based HRV needs.
 """
 
 import numpy as np
 from scipy.signal import welch, find_peaks
+
+from deap_loader import EEG_CHANNEL_NAMES, SAMPLING_RATE
 
 BANDS = {
     "theta": (4, 8),
@@ -51,9 +49,9 @@ BANDS = {
     "gamma": (30, 45),
 }
 
-# Common frontal asymmetry pairs, checked in order of preference against
-# whatever channel_names the current dataset actually has.
-FRONTAL_PAIR_CANDIDATES = [("F3", "F4"), ("AF3", "AF4"), ("F7", "F8")]
+# Standard frontal asymmetry pair used in the affective-neuroscience literature
+LEFT_FRONTAL = "F3"
+RIGHT_FRONTAL = "F4"
 
 
 def band_power(signal, fs, band, nperseg=256):
@@ -66,52 +64,80 @@ def band_power(signal, fs, band, nperseg=256):
     return float(np.mean(psd[band_mask]))
 
 
-def _find_frontal_pair(channel_names):
-    """Return (left_idx, right_idx) for the first available frontal pair, or None."""
-    for left, right in FRONTAL_PAIR_CANDIDATES:
-        if left in channel_names and right in channel_names:
-            return channel_names.index(left), channel_names.index(right)
-    return None
-
-
-def eeg_band_features(eeg_trial, channel_names, fs):
+def eeg_band_features(eeg_trial, fs=SAMPLING_RATE, channel_names=None):
     """
-    eeg_trial: shape (n_channels, n_samples)
-    channel_names: list of str, len == n_channels — dataset-specific montage
+    eeg_trial: shape (n_channels, n_samples) — n_channels no longer has to
+    be 32/DEAP-specific; this works with any EEG device's channel count.
+
+    channel_names: optional list of channel names matching eeg_trial's rows.
+    Defaults to DEAP's 32 standard names (for backward compatibility with
+    DEAP data). If frontal channels F3/F4 aren't present in channel_names
+    (e.g. your own headset uses different electrode positions), frontal
+    asymmetry falls back to an approximate "first half vs second half of
+    channels" split as a rough left/right hemisphere proxy — worth flagging
+    in any write-up as an approximation, not the literature-standard F3/F4
+    measure, if your channel names don't include real 10-20 system labels.
+
     Returns a flat feature vector: n_channels x 4 bands, plus 1 frontal
-    asymmetry feature IF a known frontal pair is present in channel_names
-    (silently omitted otherwise — no fake asymmetry value is invented).
+    asymmetry feature at the end.
     """
-    features = []
-    alpha_by_channel = {}
+    n_channels = eeg_trial.shape[0]
+    if channel_names is None:
+        if n_channels <= len(EEG_CHANNEL_NAMES):
+            channel_names = EEG_CHANNEL_NAMES[:n_channels]
+        else:
+            channel_names = [f"ch{i}" for i in range(n_channels)]
 
-    for ch_idx, ch_name in enumerate(channel_names):
+    features = []
+    channel_alpha_power = {}  # keep alpha power per channel for asymmetry calc
+
+    for ch_idx in range(n_channels):
+        ch_name = channel_names[ch_idx] if ch_idx < len(channel_names) else f"ch{ch_idx}"
         signal = eeg_trial[ch_idx, :]
         for band_name, band_range in BANDS.items():
             power = band_power(signal, fs, band_range)
             if band_name == "alpha":
-                alpha_by_channel[ch_name] = power
+                channel_alpha_power[ch_name] = power
             features.append(power)
 
-    pair = _find_frontal_pair(channel_names)
-    if pair is not None:
-        left_name, right_name = channel_names[pair[0]], channel_names[pair[1]]
-        eps = 1e-10
-        asymmetry = np.log(alpha_by_channel[right_name] + eps) - np.log(alpha_by_channel[left_name] + eps)
-        features.append(asymmetry)
+    # Frontal alpha asymmetry: ln(right alpha) - ln(left alpha).
+    eps = 1e-10
+    left_name = next((n for n in channel_names if n.upper() == LEFT_FRONTAL), None)
+    right_name = next((n for n in channel_names if n.upper() == RIGHT_FRONTAL), None)
+
+    if left_name is not None and right_name is not None:
+        right_alpha = channel_alpha_power[right_name]
+        left_alpha = channel_alpha_power[left_name]
+    else:
+        # Generic fallback for non-DEAP channel layouts: approximate left/right
+        # hemisphere as the first half vs. second half of channels. This is a
+        # rough proxy, not the real F3/F4 measure — fine for getting a working
+        # pipeline on arbitrary hardware, but call this out explicitly if used
+        # in any publication.
+        half = max(n_channels // 2, 1)
+        left_vals = [channel_alpha_power[n] for n in channel_names[:half]]
+        right_vals = [channel_alpha_power[n] for n in channel_names[half:]] or left_vals
+        left_alpha = float(np.mean(left_vals))
+        right_alpha = float(np.mean(right_vals))
+
+    asymmetry = np.log(right_alpha + eps) - np.log(left_alpha + eps)
+    features.append(asymmetry)
 
     return np.array(features)
 
 
-def hrv_features(cardiac_trial, fs):
+def hrv_features(plethysmo_trial, fs=SAMPLING_RATE):
     """
-    cardiac_trial: shape (n_samples,) — ECG or plethysmograph/PPG, either works.
-    Detects pulse/QRS peaks and computes RMSSD + SDNN from inter-beat intervals.
+    plethysmo_trial: shape (n_samples,)
+    Detects pulse peaks and computes RMSSD + SDNN from inter-beat intervals.
     """
-    min_distance_samples = int(fs * 60 / 180)  # assume heart rate won't exceed ~180 bpm
-    peaks, _ = find_peaks(cardiac_trial, distance=min_distance_samples)
+    # min distance between peaks: assume heart rate won't exceed ~180 bpm
+    min_distance_samples = int(fs * 60 / 180)
+    peaks, _ = find_peaks(plethysmo_trial, distance=min_distance_samples)
 
     if len(peaks) < 3:
+        # Not enough peaks to compute meaningful HRV — return zeros rather
+        # than crashing, but this is a real data-quality signal worth logging.
         return np.array([0.0, 0.0])
 
     ibis = np.diff(peaks) / fs * 1000.0  # inter-beat intervals in milliseconds
@@ -122,8 +148,9 @@ def hrv_features(cardiac_trial, fs):
     return np.array([rmssd, sdnn])
 
 
-def extract_trial_features(eeg_trial, cardiac_trial, channel_names, eeg_fs, cardiac_fs):
+def extract_trial_features(eeg_trial, plethysmo_trial, fs=SAMPLING_RATE, channel_names=None):
     """Combines EEG band-power/asymmetry features with HRV features."""
-    eeg_feats = eeg_band_features(eeg_trial, channel_names, eeg_fs)
-    hrv_feats = hrv_features(cardiac_trial, cardiac_fs)
+    eeg_feats = eeg_band_features(eeg_trial, fs, channel_names=channel_names)
+    hrv_feats = hrv_features(plethysmo_trial, fs)
     return np.concatenate([eeg_feats, hrv_feats])
+

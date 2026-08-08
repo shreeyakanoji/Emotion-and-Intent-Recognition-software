@@ -11,10 +11,14 @@ generates synthetic RAW SIGNALS (sine waves + noise, DEAP's exact array
 shapes) and pushes them through your REAL feature extraction pipeline, so
 I'm testing the actual pipeline logic, not just the classifier.
 
-We deliberately bake in a small label-dependent difference (higher alpha
-power for "Low" valence trials) so the classifier has *something* real to
-learn — otherwise we'd just be testing that the code runs, not that a
-real signal-to-label relationship gets picked up correctly.
+We deliberately bake in a *small, noisy* label-dependent tendency (slightly
+higher alpha power on a subset of channels for "Low" valence trials) so the
+classifier has something real but hard to learn — not a clean, noise-free
+signal. A model trained on this should land somewhere in a realistic
+60-85% accuracy range, similar to what's typical on real DEAP data (see
+README), NOT 95-100%. If you're seeing near-perfect accuracy, that's a sign
+something's leaking information (e.g. testing on data the model already
+saw), not that the model is genuinely great.
 """
 
 import os
@@ -43,13 +47,20 @@ def generate_subject_data(seed=0):
 
         labels[trial] = [valence_rating, arousal_rating, rng.uniform(1, 9), rng.uniform(1, 9)]
 
-        # EEG channels: baseline 10Hz alpha rhythm + noise.
-        # Low valence trials get boosted alpha power (synthetic signal, not a real
-        # neuroscience claim — this is just so the classifier has a pattern to find).
-        alpha_amplitude = 15.0 if low_valence else 6.0
+        # EEG channels: baseline alpha rhythm + noise. Only a random subset of
+        # channels carries any label-related effect at all (real EEG effects
+        # aren't uniform across all 32 electrodes), the effect size itself is
+        # small and noisy trial-to-trial (not a fixed constant), and the
+        # background noise is large relative to that effect — this is what
+        # keeps the task genuinely hard instead of trivially separable.
+        trial_effect_size = rng.normal(2.0, 1.5) if low_valence else rng.normal(0.0, 1.5)
         for ch in range(N_EEG_CHANNELS):
-            alpha_wave = alpha_amplitude * np.sin(2 * np.pi * 10 * t + rng.uniform(0, 2 * np.pi))
-            noise = rng.normal(0, 5, N_SAMPLES)
+            channel_carries_effect = rng.rand() < 0.35
+            base_amplitude = rng.uniform(6.0, 10.0)
+            amplitude = base_amplitude + (trial_effect_size if channel_carries_effect else 0.0)
+            amplitude = max(amplitude, 0.5)
+            alpha_wave = amplitude * np.sin(2 * np.pi * 10 * t + rng.uniform(0, 2 * np.pi))
+            noise = rng.normal(0, 9, N_SAMPLES)
             data[trial, ch, :] = alpha_wave + noise
 
         # Peripheral channels 32-39. We only care about index 38 (plethysmograph)
@@ -58,12 +69,12 @@ def generate_subject_data(seed=0):
         for ch in range(N_EEG_CHANNELS, N_EEG_CHANNELS + N_PERIPHERAL_CHANNELS):
             data[trial, ch, :] = rng.normal(0, 1, N_SAMPLES)
 
-        # Plethysmograph (index 38): simulate a pulse wave around ~70bpm,
-        # with slightly faster/more variable rate on high-arousal trials.
-        bpm = 70 + (20 if arousal_rating > 5 else 0) + rng.uniform(-5, 5)
-        pulse_freq = bpm / 60.0
+        # Plethysmograph (index 38): simulate a pulse wave around ~70bpm, with
+        # a small, noisy arousal-linked rate shift rather than a clean jump.
+        bpm = 70 + rng.normal(6 if arousal_rating > 5 else 0, 6) + rng.uniform(-5, 5)
+        pulse_freq = max(bpm, 40) / 60.0
         pulse_wave = np.sin(2 * np.pi * pulse_freq * t) + 0.3 * np.sin(4 * np.pi * pulse_freq * t)
-        data[trial, 38, :] = pulse_wave * 50 + rng.normal(0, 3, N_SAMPLES)
+        data[trial, 38, :] = pulse_wave * 50 + rng.normal(0, 6, N_SAMPLES)
 
     return {"data": data, "labels": labels}
 

@@ -1,22 +1,18 @@
 """
 train.py
 
-Ties everything together on real (or synthetic dry-run) data:
-  1. Load a dataset via dataset_adapters.py (DEAP, DREAMER, or synthetic)
+Ties everything together on REAL data:
+  1. Load DEAP subjects
   2. Extract features (band power + frontal asymmetry + HRV) per trial
   3. Train a classifier with a proper train/test split AND cross-validation
   4. Report real accuracy/F1 — not a mock number
 
-CHANGED FROM v2: the trained bundle now also stores eeg_channel_names,
-eeg_fs, and cardiac_fs alongside the model/scaler. This is what lets
-pipeline.py extract features correctly at inference time regardless of
-which dataset the model was trained on — inference must use the exact
-same montage/sampling-rate assumptions as training, or features silently
-won't line up.
-
 USAGE:
-    python train.py deap /path/to/data_preprocessed_python --target valence --subjects 5
-    python train.py synthetic --target valence --subjects 3
+    python train.py /path/to/data_preprocessed_python --target valence --subjects 5
+
+Start with a small number of subjects (e.g. 5) first — 32 subjects x 40 trials
+x 128 features is small enough to run fast, but starting small lets you sanity
+check the whole pipeline before committing to a full run.
 """
 
 import argparse
@@ -26,42 +22,74 @@ from sklearn.model_selection import train_test_split, cross_val_score, Stratifie
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 from sklearn.preprocessing import StandardScaler
 
+from deap_loader import load_all_subjects
 from features import extract_trial_features
-import dataset_adapters
 
 
-def build_feature_matrix(eeg, cardiac, channel_names, eeg_fs, cardiac_fs):
+def build_feature_matrix(eeg, plethysmo, channel_names=None, fs=None):
     """
-    eeg:     (n_trials, n_channels, n_samples)
-    cardiac: (n_trials, n_samples_cardiac)
+    eeg:       (n_trials, n_channels, n_samples) — n_channels can be any
+               value, not just DEAP's 32, as long as it's consistent across
+               all trials in this matrix.
+    plethysmo: (n_trials, n_samples)
+    channel_names: optional list of channel names for eeg's channel axis.
+    fs: sampling rate in Hz of this data. Defaults to DEAP's 128Hz if not
+        given — IMPORTANT to set correctly for non-DEAP hardware, since
+        frequency-band features (theta/alpha/beta/gamma) are computed
+        relative to the sampling rate.
     Returns X: (n_trials, n_features)
     """
+    from deap_loader import SAMPLING_RATE as DEAP_FS
+    fs = fs or DEAP_FS
     n_trials = eeg.shape[0]
     feature_rows = []
     for i in range(n_trials):
-        feats = extract_trial_features(eeg[i], cardiac[i], channel_names, eeg_fs, cardiac_fs)
+        feats = extract_trial_features(eeg[i], plethysmo[i], fs=fs, channel_names=channel_names)
         feature_rows.append(feats)
     return np.vstack(feature_rows)
 
 
-def train_model(eeg, cardiac, channel_names, eeg_fs, cardiac_fs, y, target,
-                 n_estimators=200, progress_cb=None):
+def train_model(eeg, plethysmo, y, target, n_estimators=200, progress_cb=None,
+                 channel_names=None, fs=None):
     """
-    Reusable training routine — callable directly (e.g. from unified_app.py)
-    without going through argparse or touching the filesystem.
+    Reusable training routine — same logic the CLI below uses, but callable
+    directly (e.g. from a Streamlit app) without going through argparse or
+    touching the filesystem.
+
+    eeg:       (n_trials, n_channels, n_samples) — any channel count, as
+               long as it matches what you'll feed EmotionPipeline later.
+    plethysmo: (n_trials, n_samples)
+    y:         (n_trials,) binary labels
+    target:    a short label name (e.g. "valence", "arousal", "stress") —
+               just stored in the bundle for the pipeline to label
+               predictions with later.
+    channel_names: optional list of channel names. Stored in the bundle so
+               EmotionPipeline can reuse the exact same channel semantics
+               (matters for the frontal-asymmetry feature) at inference time.
+    fs: sampling rate in Hz of this data (defaults to DEAP's 128Hz). Stored
+               in the bundle so EmotionPipeline automatically uses the
+               correct rate at inference time instead of assuming DEAP's.
+    progress_cb: optional callable(str) for status messages (e.g. st.write)
 
     Returns (bundle, report) where:
-      bundle = {"model", "scaler", "target", "eeg_channel_names", "eeg_fs",
-                "cardiac_fs"} — everything pipeline.py needs to reproduce
-                the exact same features at inference time.
-      report = dict of metrics for display.
+      bundle = {"model": clf, "scaler": scaler, "target": target,
+                "channel_names": channel_names, "n_channels": eeg.shape[1],
+                "fs": fs}
+               (the exact dict shape trained_model.joblib stores)
+      report = dict of metrics: accuracy, f1, confusion_matrix (list),
+               cv_mean, cv_std, feature_importances (top 10 as list of
+               (index, importance))
     """
+    from deap_loader import SAMPLING_RATE as DEAP_FS
+    fs = fs or DEAP_FS
+
     def log(msg):
         if progress_cb:
             progress_cb(msg)
 
-    log(f"Loaded {eeg.shape[0]} trials. Extracting features ...")
-    X = build_feature_matrix(eeg, cardiac, channel_names, eeg_fs, cardiac_fs)
+    n_channels = eeg.shape[1]
+    log(f"Loaded {eeg.shape[0]} trials ({n_channels} channels, {fs}Hz). Extracting features ...")
+    X = build_feature_matrix(eeg, plethysmo, channel_names=channel_names, fs=fs)
     log(f"Feature matrix shape: {X.shape}")
 
     scaler = StandardScaler()
@@ -91,9 +119,9 @@ def train_model(eeg, cardiac, channel_names, eeg_fs, cardiac_fs, y, target,
         "model": clf,
         "scaler": scaler,
         "target": target,
-        "eeg_channel_names": channel_names,
-        "eeg_fs": eeg_fs,
-        "cardiac_fs": cardiac_fs,
+        "channel_names": channel_names,
+        "n_channels": n_channels,
+        "fs": fs,
     }
     report = {
         "n_trials": int(eeg.shape[0]),
@@ -110,31 +138,16 @@ def train_model(eeg, cardiac, channel_names, eeg_fs, cardiac_fs, y, target,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("dataset", choices=["deap", "synthetic"],
-                         help="'deap' needs data_dir; 'synthetic' needs no real data")
-    parser.add_argument("data_dir", nargs="?", default=None,
-                         help="Path to DEAP's data_preprocessed_python folder (deap only)")
+    parser.add_argument("data_dir", help="Path to DEAP's data_preprocessed_python folder")
     parser.add_argument("--target", choices=["valence", "arousal"], default="valence")
-    parser.add_argument("--subjects", type=int, default=5, help="Number of subjects to load")
+    parser.add_argument("--subjects", type=int, default=5, help="Number of subjects to load (max 32)")
     args = parser.parse_args()
 
-    print(f"Loading data ({args.dataset}) ...")
-    if args.dataset == "deap":
-        if not args.data_dir:
-            raise SystemExit("deap requires a data_dir argument")
-        import os
-        paths = [os.path.join(args.data_dir, f"s{i:02d}.dat") for i in range(1, args.subjects + 1)]
-        bundle_data = dataset_adapters.load_deap_dat_paths(paths)
-    else:
-        bundle_data = dataset_adapters.load_synthetic(n_subjects=args.subjects)
+    print(f"Loading {args.subjects} subject(s) from {args.data_dir} ...")
+    eeg, plethysmo, labels = load_all_subjects(args.data_dir, n_subjects=args.subjects)
+    y = labels[args.target]
 
-    y = bundle_data["labels"][args.target]
-
-    bundle, report = train_model(
-        bundle_data["eeg"], bundle_data["cardiac"],
-        bundle_data["eeg_channel_names"], bundle_data["eeg_fs"], bundle_data["cardiac_fs"],
-        y, args.target, progress_cb=print,
-    )
+    bundle, report = train_model(eeg, plethysmo, y, args.target, progress_cb=print)
 
     import joblib
     joblib.dump(bundle, "trained_model.joblib")
@@ -145,7 +158,9 @@ def main():
     print(f"F1 score: {report['f1']:.3f}")
     print("Confusion matrix:")
     print(np.array(report["confusion_matrix"]))
+
     print(f"\n5-fold CV accuracy: {report['cv_mean']:.3f} +/- {report['cv_std']:.3f}")
+
     print("\nTop 10 most important features (by index):")
     for idx, importance in report["top_features"]:
         print(f"  feature[{idx}]: importance={importance:.4f}")
@@ -153,3 +168,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

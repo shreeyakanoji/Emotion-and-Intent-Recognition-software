@@ -2,4 +2,5 @@ numpy
 scipy
 scikit-learn
 joblib
+pandas
 streamlit
